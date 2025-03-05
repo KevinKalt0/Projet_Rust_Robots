@@ -1,0 +1,8 @@
+[package]
+name = "simulation_robots"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = "0.12.1"
+rand = "0.8.5"
