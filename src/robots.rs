@@ -16,16 +16,14 @@ struct Base;
 #[derive(Component)]
 struct Crystal;
 
-#[derive(Component)]
-struct DebugGrid;
-
-// Nouveaux composants pour les ressources
-#[derive(Component, Clone, Debug)]
-enum Resource {
+#[derive(Component, Debug)]
+pub enum Resource {
     Energy,
     Mineral,
-    ScientificSite,
 }
+
+#[derive(Component)]
+struct DebugGrid;
 
 #[derive(Resource)]
 struct GameMap {
@@ -36,10 +34,20 @@ struct GameMap {
 }
 
 #[derive(Resource)]
-struct MapResources {
-    energy_positions: Vec<Vec2>,
-    mineral_positions: Vec<Vec2>,
-    scientific_sites: Vec<Vec2>,
+pub struct MapResources {
+    pub energy_positions: Vec<Vec2>,
+    pub mineral_positions: Vec<Vec2>,
+    pub scientific_sites: Vec<Vec2>,
+}
+
+impl Default for MapResources {
+    fn default() -> Self {
+        Self {
+            energy_positions: Vec::new(),
+            mineral_positions: Vec::new(),
+            scientific_sites: Vec::new(),
+        }
+    }
 }
 
 // Ressources
@@ -75,10 +83,6 @@ struct ExplorerState {
     time_until_change: f32,
 }
 
-// Composant pour les tuiles de brouillard
-#[derive(Component)]
-struct FogTile;
-
 pub struct SimulationPlugin;
 
 impl Plugin for SimulationPlugin {
@@ -86,31 +90,48 @@ impl Plugin for SimulationPlugin {
         let seed = rand::random::<u32>();
         let game_map = generate_map(800.0, 600.0, 10.0, seed);
         
-        let explored_zones = ExploredZones {
-            grid: vec![vec![false; 80]; 60],
-            cell_size: 10.0,
+        let map_resources = MapResources {
+            energy_positions: vec![
+                Vec2::new(200.0, 150.0),
+                Vec2::new(-200.0, 150.0),
+                Vec2::new(0.0, -150.0),
+                Vec2::new(150.0, 0.0),     // Nouveaux points jaunes
+                Vec2::new(-150.0, 0.0),
+                Vec2::new(250.0, -100.0),
+                Vec2::new(-250.0, 100.0),
+            ],
+            mineral_positions: vec![
+                Vec2::new(-200.0, -150.0),
+                Vec2::new(200.0, -150.0),
+                Vec2::new(0.0, 150.0),
+                Vec2::new(100.0, -50.0),   // Nouveaux points bleus
+                Vec2::new(-100.0, 50.0),
+                Vec2::new(150.0, 200.0),
+                Vec2::new(-150.0, -200.0),
+            ],
+            scientific_sites: vec![
+                Vec2::new(100.0, 100.0),
+                Vec2::new(-100.0, -100.0),
+            ],
         };
-        
-        let map_resources = generate_resources(&game_map);
 
-        app
-            .insert_resource(game_map)
+        app.insert_resource(game_map)
             .insert_resource(map_resources)
-            .insert_resource(explored_zones)
             .insert_resource(DiscoveredResource::default())
             .insert_resource(ExplorerState {
                 current_direction: Vec2::new(1.0, 0.0),
                 time_until_change: 2.0,
             })
             .add_systems(Startup, setup)
-            .add_systems(Update, (
-                move_explorer,
-                check_resource_discovery,
-                move_miners,
-                update_explored_map,
-                update_fog_of_war,
-                debug_draw_map,
-            ).chain());
+            .add_systems(
+                Update,
+                (
+                    move_explorer,
+                    check_resource_discovery,
+                    move_miners,
+                    debug_draw_map,
+                ).chain()
+            );
     }
 }
 
@@ -120,12 +141,12 @@ fn setup(
     // Caméra
     commands.spawn(Camera2dBundle::default());
 
-    // Base (Bleu)
+    // Base (Bleu) - Taille réduite
     commands.spawn((
         SpriteBundle {
             sprite: Sprite {
                 color: Color::BLUE,
-                custom_size: Some(Vec2::new(40.0, 40.0)),
+                custom_size: Some(Vec2::new(30.0, 30.0)), // Réduit de 40 à 30
                 ..default()
             },
             transform: Transform::from_xyz(0., 0., 0.),
@@ -134,12 +155,12 @@ fn setup(
         Base,
     ));
 
-    // Explorateur (Vert)
+    // Explorateur (Vert) - Taille réduite
     commands.spawn((
         SpriteBundle {
             sprite: Sprite {
                 color: Color::GREEN,
-                custom_size: Some(Vec2::new(20.0, 30.0)),
+                custom_size: Some(Vec2::new(15.0, 20.0)), // Réduit de 20x30 à 15x20
                 ..default()
             },
             transform: Transform::from_xyz(0., 50., 0.),
@@ -148,13 +169,13 @@ fn setup(
         Explorer,
     ));
 
-    // Mineurs (Orange)
+    // Mineurs (Orange) - Taille réduite
     for i in 0..3 {
         commands.spawn((
             SpriteBundle {
                 sprite: Sprite {
                     color: Color::rgb(1.0, 0.5, 0.0),
-                    custom_size: Some(Vec2::new(15.0, 15.0)),
+                    custom_size: Some(Vec2::new(10.0, 10.0)), // Réduit de 15 à 10
                     ..default()
                 },
                 transform: Transform::from_xyz(30. * (i as f32 - 1.), -30., 0.),
@@ -163,41 +184,10 @@ fn setup(
             Miner,
         ));
     }
-
-    // Créer le brouillard de guerre - tuiles plus petites pour une meilleure résolution
-    let fog_size = 10.0; // Taille réduite des tuiles
-    let width = 800.0;
-    let height = 600.0;
-    
-    let cols = (width / fog_size) as i32;
-    let rows = (height / fog_size) as i32;
-    
-    for y in 0..rows {
-        for x in 0..cols {
-            let pos_x = (x as f32 * fog_size) - (width / 2.0) + (fog_size / 2.0);
-            let pos_y = (y as f32 * fog_size) - (height / 2.0) + (fog_size / 2.0);
-            
-            commands.spawn((
-                SpriteBundle {
-                    sprite: Sprite {
-                        color: Color::rgba(0.1, 0.1, 0.1, 1.0), // Opacité complète
-                        custom_size: Some(Vec2::new(fog_size, fog_size)),
-                        ..default()
-                    },
-                    transform: Transform::from_xyz(pos_x, pos_y, 2.0), // Z-index plus élevé
-                    ..default()
-                },
-                FogTile,
-            ));
-        }
-    }
 }
 
 fn move_explorer(
-    mut query_set: ParamSet<(
-        Query<&mut Transform, With<Explorer>>,
-        Query<(&mut Sprite, &Transform), With<FogTile>>,
-    )>,
+    mut explorer_query: Query<&mut Transform, With<Explorer>>,
     time: Res<Time>,
     mut explorer_state: ResMut<ExplorerState>,
     discovered_resource: Res<DiscoveredResource>,
@@ -207,89 +197,40 @@ fn move_explorer(
         return;
     }
 
-    let mut explorer_pos = Vec3::ZERO;
+    for mut transform in explorer_query.iter_mut() {
+        explorer_state.time_until_change -= time.delta_seconds();
 
-    // Mise à jour de l'explorateur
-    {
-        let mut explorer_query = query_set.p0();
-        for mut transform in explorer_query.iter_mut() {
-            explorer_state.time_until_change -= time.delta_seconds();
-            let speed = 150.0;
-            let mut should_change_direction = false;
+        if explorer_state.time_until_change <= 0.0 {
+            explorer_state.current_direction = Vec2::new(
+                rand::thread_rng().gen_range(-1.0..=1.0),
+                rand::thread_rng().gen_range(-1.0..=1.0),
+            ).normalize();
+            explorer_state.time_until_change = 2.0;
+        }
 
-            // Vérifier si la direction actuelle est bloquée
-            let test_pos = transform.translation + Vec3::new(
-                explorer_state.current_direction.x * speed * time.delta_seconds() * 2.0,
-                explorer_state.current_direction.y * speed * time.delta_seconds() * 2.0,
-                0.0
-            );
+        let speed = 100.0; // Réduit de 150 à 100
 
-            if is_position_blocked(test_pos, &game_map) || test_pos.x.abs() > 350.0 || test_pos.y.abs() > 250.0 {
-                should_change_direction = true;
-            }
+        let mut new_pos = transform.translation;
+        new_pos.x += explorer_state.current_direction.x * speed * time.delta_seconds();
+        new_pos.y += explorer_state.current_direction.y * speed * time.delta_seconds();
 
-            // Changer de direction si nécessaire
-            if should_change_direction || explorer_state.time_until_change <= 0.0 {
-                // Essayer plusieurs directions jusqu'à en trouver une valide
-                for _ in 0..8 {
-                    let new_direction = Vec2::new(
-                        rand::thread_rng().gen_range(-1.0..=1.0),
-                        rand::thread_rng().gen_range(-1.0..=1.0),
-                    ).normalize();
-
-                    let test_pos = transform.translation + Vec3::new(
-                        new_direction.x * speed * time.delta_seconds() * 2.0,
-                        new_direction.y * speed * time.delta_seconds() * 2.0,
-                        0.0
-                    );
-
-                    if !is_position_blocked(test_pos, &game_map) 
-                       && test_pos.x.abs() <= 350.0 
-                       && test_pos.y.abs() <= 250.0 {
-                        explorer_state.current_direction = new_direction;
-                        break;
-                    }
-                }
-                explorer_state.time_until_change = 2.0;
-            }
-
-            // Déplacement
-            let mut new_pos = transform.translation;
+        if is_position_blocked(new_pos, &game_map) || new_pos.x.abs() > 350.0 || new_pos.y.abs() > 250.0 {
+            explorer_state.current_direction = Vec2::new(
+                rand::thread_rng().gen_range(-1.0..=1.0),
+                rand::thread_rng().gen_range(-1.0..=1.0),
+            ).normalize();
+            
+            new_pos = transform.translation;
             new_pos.x += explorer_state.current_direction.x * speed * time.delta_seconds();
             new_pos.y += explorer_state.current_direction.y * speed * time.delta_seconds();
-            new_pos.x = new_pos.x.clamp(-350.0, 350.0);
-            new_pos.y = new_pos.y.clamp(-250.0, 250.0);
-
-            // Vérifier une dernière fois si la nouvelle position est valide
-            if !is_position_blocked(new_pos, &game_map) {
-                transform.translation = new_pos;
-                transform.rotation = Quat::from_rotation_z(
-                    -explorer_state.current_direction.y.atan2(explorer_state.current_direction.x)
-                );
-            }
-
-            explorer_pos = transform.translation;
         }
-    }
 
-    // Mise à jour du brouillard
-    {
-        let mut fog_query = query_set.p1();
-        let vision_radius = 60.0;
-        let fade_distance = 20.0;
-
-        for (mut fog_sprite, fog_transform) in fog_query.iter_mut() {
-            let distance = explorer_pos.distance(fog_transform.translation);
-            
-            if distance < vision_radius {
-                fog_sprite.color.set_a(0.0);
-            } else if distance < vision_radius + fade_distance {
-                let fade = (distance - vision_radius) / fade_distance;
-                let current_alpha = fog_sprite.color.a();
-                let new_alpha = fade.min(current_alpha);
-                fog_sprite.color.set_a(new_alpha);
-            }
-        }
+        new_pos.x = new_pos.x.clamp(-350.0, 350.0);
+        new_pos.y = new_pos.y.clamp(-250.0, 250.0);
+        transform.translation = new_pos;
+        transform.rotation = Quat::from_rotation_z(
+            -explorer_state.current_direction.y.atan2(explorer_state.current_direction.x)
+        );
     }
 }
 
@@ -358,32 +299,22 @@ fn check_resource_discovery(
     resources_query: Query<(&Transform, &Resource)>,
     mut discovered_resource: ResMut<DiscoveredResource>,
 ) {
-    // Si une ressource est déjà découverte, ne rien faire
     if discovered_resource.position.is_some() {
         return;
     }
 
-    if let Ok(explorer_transform) = explorer_query.get_single() {
+    for explorer_transform in explorer_query.iter() {
         let explorer_pos = explorer_transform.translation;
         
-        // Vérifier chaque ressource
-        for (resource_transform, resource_type) in resources_query.iter() {
-            let resource_pos = resource_transform.translation;
-            let distance = explorer_pos.distance(resource_pos);
-
-            // Vérifier uniquement les minéraux et l'énergie
-            match resource_type {
-                Resource::Mineral | Resource::Energy => {
-                    if distance < 50.0 {  // Augmentation de la distance de détection
-                        println!("Ressource trouvée! Type: {:?}, Distance: {}", resource_type, distance);
-                        discovered_resource.position = Some(Vec2::new(
-                            resource_pos.x,
-                            resource_pos.y
-                        ));
-                        return;  // Sortir immédiatement après avoir trouvé une ressource
-                    }
-                },
-                _ => continue,
+        for (resource_transform, _resource_type) in resources_query.iter() {
+            let distance = explorer_pos.distance(resource_transform.translation);
+            
+            if distance < 50.0 {
+                discovered_resource.position = Some(Vec2::new(
+                    resource_transform.translation.x,
+                    resource_transform.translation.y,
+                ));
+                break;
             }
         }
     }
@@ -393,7 +324,6 @@ fn move_miners(
     mut query_set: ParamSet<(
         Query<&mut Transform, (With<Miner>, Without<Base>)>,
         Query<(Entity, &Transform, &Resource)>,
-        Query<(&Sprite, &Transform), With<FogTile>>,
     )>,
     mut discovered_resource: ResMut<DiscoveredResource>,
     mut commands: Commands,
@@ -405,7 +335,6 @@ fn move_miners(
         let mut resource_to_remove = None;
         let mut resource_exists = false;
 
-        // Vérifier si la ressource existe toujours
         {
             let resources = query_set.p1();
             for (entity, transform, _) in resources.iter() {
@@ -422,23 +351,13 @@ fn move_miners(
             return;
         }
 
-        // Collecter d'abord les informations sur les zones révélées
-        let revealed_zones: Vec<(Vec3, bool)> = {
-            let fog_query = query_set.p2();
-            fog_query.iter()
-                .map(|(sprite, transform)| (transform.translation, sprite.color.a() < 0.5))
-                .collect()
-        };
-
-        // Ensuite, déplacer les mineurs
         let mut miners = query_set.p0();
         for mut miner_transform in miners.iter_mut() {
             let current_pos = miner_transform.translation;
             let direction = (resource_pos_3d - current_pos).normalize();
-            let speed = 200.0;
+            let speed = 120.0;
             let step_size = speed * time.delta_seconds();
 
-            // Vérifier si le mineur a atteint la ressource
             if current_pos.distance(resource_pos_3d) < 15.0 {
                 if let Some(entity) = resource_to_remove {
                     commands.entity(entity).despawn();
@@ -448,31 +367,43 @@ fn move_miners(
                 }
             }
 
-            // Trouver un chemin dans la zone révélée
-            let mut valid_move = false;
-            let test_angles: [f32; 8] = [0.0, 45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0];
-            
-            for angle in test_angles.iter() {
-                let rotated_direction = rotate_vector(direction, angle.to_radians());
-                let test_pos = current_pos + rotated_direction * step_size;
-                
-                // Vérifier si la position est dans une zone révélée
-                let is_revealed = revealed_zones.iter().any(|(pos, is_revealed)| {
-                    pos.distance(test_pos) < 30.0 && *is_revealed
-                });
+            // Amélioration du système de contournement d'obstacles
+            let mut best_direction = direction;
+            let mut min_obstacle_count = i32::MAX;
+            let test_angles: [f32; 13] = [
+                0.0, 15.0, -15.0, 30.0, -30.0, 45.0, -45.0, 
+                60.0, -60.0, 90.0, -90.0, 120.0, -120.0
+            ];
 
-                if is_revealed && !is_position_blocked(test_pos, &game_map) {
-                    miner_transform.translation = test_pos;
-                    miner_transform.rotation = Quat::from_rotation_z(
-                        -rotated_direction.y.atan2(rotated_direction.x)
-                    );
-                    valid_move = true;
-                    break;
+            for angle in test_angles {
+                let test_direction = rotate_vector(direction, angle.to_radians());
+                let mut obstacle_count = 0;
+                let mut can_move = true;
+
+                // Vérifier plusieurs points le long de la trajectoire
+                for i in 1..=5 {
+                    let test_pos = current_pos + test_direction * (step_size * 0.5 * i as f32);
+                    if is_position_blocked(test_pos, &game_map) {
+                        obstacle_count += 1;
+                        if i <= 2 { // Bloquer les mouvements qui mènent directement à un obstacle
+                            can_move = false;
+                            break;
+                        }
+                    }
+                }
+
+                if can_move && obstacle_count < min_obstacle_count {
+                    min_obstacle_count = obstacle_count;
+                    best_direction = test_direction;
                 }
             }
 
-            if !valid_move {
-                continue;
+            let new_pos = current_pos + best_direction * step_size;
+            if !is_position_blocked(new_pos, &game_map) {
+                miner_transform.translation = new_pos;
+                miner_transform.rotation = Quat::from_rotation_z(
+                    -best_direction.y.atan2(best_direction.x)
+                );
             }
         }
     }
@@ -486,34 +417,6 @@ fn rotate_vector(v: Vec3, angle: f32) -> Vec3 {
         v.x * sin_a + v.y * cos_a,
         0.0
     )
-}
-
-// Système pour révéler la carte autour de l'explorateur
-fn update_fog_of_war(
-    explorer_query: Query<&Transform, With<Explorer>>,
-    mut fog_tiles: Query<(&mut Sprite, &Transform), With<FogTile>>,
-) {
-    if let Ok(explorer_transform) = explorer_query.get_single() {
-        let explorer_pos = explorer_transform.translation;
-        let vision_radius = 60.0; // Rayon de vision augmenté
-        let fade_distance = 20.0;
-
-        for (mut fog_sprite, fog_transform) in fog_tiles.iter_mut() {
-            let distance = explorer_pos.distance(fog_transform.translation);
-            
-            if distance < vision_radius {
-                // Zone complètement révélée
-                fog_sprite.color.set_a(0.0);
-            } else if distance < vision_radius + fade_distance {
-                // Zone de transition
-                let fade = (distance - vision_radius) / fade_distance;
-                fog_sprite.color.set_a(fade);
-            } else {
-                // Zone non explorée
-                fog_sprite.color.set_a(1.0);
-            }
-        }
-    }
 }
 
 fn debug_draw_map(
@@ -541,7 +444,7 @@ fn debug_draw_map(
                         transform: Transform::from_xyz(
                             x as f32 * map.cell_size - map.size.x/2.0,
                             y as f32 * map.cell_size - map.size.y/2.0,
-                            0.0, // Sous le brouillard
+                            0.0,
                         ),
                         ..default()
                     },
@@ -551,17 +454,23 @@ fn debug_draw_map(
         }
     }
 
-    // Dessiner les ressources
+    // Dessiner les ressources d'énergie (jaunes)
     for pos in &map_resources.energy_positions {
-        spawn_resource(&mut commands, pos, Color::YELLOW);
+        spawn_resource(&mut commands, pos, Color::YELLOW, Resource::Energy);
     }
+
+    // Dessiner les ressources minérales (bleues)
     for pos in &map_resources.mineral_positions {
-        spawn_resource(&mut commands, pos, Color::BLUE);
+        spawn_resource(&mut commands, pos, Color::BLUE, Resource::Mineral);
+    }
+
+    // Dessiner les sites scientifiques (verts)
+    for pos in &map_resources.scientific_sites {
+        spawn_resource(&mut commands, pos, Color::GREEN, Resource::Energy);
     }
 }
 
-// Fonction helper pour spawn les ressources
-fn spawn_resource(commands: &mut Commands, pos: &Vec2, color: Color) {
+fn spawn_resource(commands: &mut Commands, pos: &Vec2, color: Color, resource_type: Resource) {
     commands.spawn((
         SpriteBundle {
             sprite: Sprite {
@@ -569,10 +478,10 @@ fn spawn_resource(commands: &mut Commands, pos: &Vec2, color: Color) {
                 custom_size: Some(Vec2::new(15.0, 15.0)),
                 ..default()
             },
-            transform: Transform::from_xyz(pos.x, pos.y, 0.0), // Sous le brouillard
+            transform: Transform::from_xyz(pos.x, pos.y, 0.0),
             ..default()
         },
-        Resource::Energy,
+        resource_type,
         DebugGrid,
     ));
 }
@@ -669,4 +578,32 @@ fn is_position_blocked(pos: Vec3, game_map: &GameMap) -> bool {
     }
     
     false
+}
+
+struct Map {
+    width: u32,
+    height: u32,
+    fog: Vec<bool>, // true means fog, false means clear
+}
+
+impl Map {
+    fn new(width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            fog: vec![true; (width * height) as usize],
+        }
+    }
+
+    fn clear_fog(&mut self) {
+        for cell in self.fog.iter_mut() {
+            *cell = false;
+        }
+    }
+}
+
+fn main() {
+    let mut map = Map::new(10, 10);
+    map.clear_fog();
+    // Now the map has no fog
 }
