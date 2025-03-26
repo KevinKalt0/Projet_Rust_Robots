@@ -16,6 +16,10 @@ struct Base;
 #[derive(Component)]
 struct Crystal;
 
+#[derive(Component)]
+struct IdleMiner;
+
+
 #[derive(Component, Debug)]
 pub enum Resource {
     Energy,
@@ -40,6 +44,7 @@ pub struct MapResources {
     pub scientific_sites: Vec<Vec2>,
 }
 
+
 impl Default for MapResources {
     fn default() -> Self {
         Self {
@@ -50,15 +55,18 @@ impl Default for MapResources {
     }
 }
 
-// Ressources
 #[derive(Resource)]
 struct DiscoveredResource {
     position: Option<Vec2>,
+    is_being_collected: bool,
 }
 
 impl Default for DiscoveredResource {
     fn default() -> Self {
-        Self { position: None }
+        Self {
+            position: None,
+            is_being_collected: false,
+        }
     }
 }
 
@@ -89,6 +97,7 @@ impl Plugin for SimulationPlugin {
     fn build(&self, app: &mut App) {
         let seed = rand::random::<u32>();
         let game_map = generate_map(800.0, 600.0, 10.0, seed);
+
         
         let map_resources = MapResources {
             energy_positions: vec![
@@ -193,8 +202,8 @@ fn move_explorer(
     discovered_resource: Res<DiscoveredResource>,
     game_map: Res<GameMap>,
 ) {
-    if discovered_resource.position.is_some() {
-        return;
+    if discovered_resource.is_being_collected {
+        return; // Explorer s’arrête SEULEMENT si les mineurs sont en route
     }
 
     for mut transform in explorer_query.iter_mut() {
@@ -204,12 +213,11 @@ fn move_explorer(
             explorer_state.current_direction = Vec2::new(
                 rand::thread_rng().gen_range(-1.0..=1.0),
                 rand::thread_rng().gen_range(-1.0..=1.0),
-            ).normalize();
+            ).normalize_or_zero();
             explorer_state.time_until_change = 2.0;
         }
 
-        let speed = 100.0; // Réduit de 150 à 100
-
+        let speed = 100.0;
         let mut new_pos = transform.translation;
         new_pos.x += explorer_state.current_direction.x * speed * time.delta_seconds();
         new_pos.y += explorer_state.current_direction.y * speed * time.delta_seconds();
@@ -218,21 +226,14 @@ fn move_explorer(
             explorer_state.current_direction = Vec2::new(
                 rand::thread_rng().gen_range(-1.0..=1.0),
                 rand::thread_rng().gen_range(-1.0..=1.0),
-            ).normalize();
-            
-            new_pos = transform.translation;
-            new_pos.x += explorer_state.current_direction.x * speed * time.delta_seconds();
-            new_pos.y += explorer_state.current_direction.y * speed * time.delta_seconds();
+            ).normalize_or_zero();
+        } else {
+            transform.translation = new_pos;
+            transform.rotation = Quat::from_rotation_z(-explorer_state.current_direction.y.atan2(explorer_state.current_direction.x));
         }
-
-        new_pos.x = new_pos.x.clamp(-350.0, 350.0);
-        new_pos.y = new_pos.y.clamp(-250.0, 250.0);
-        transform.translation = new_pos;
-        transform.rotation = Quat::from_rotation_z(
-            -explorer_state.current_direction.y.atan2(explorer_state.current_direction.x)
-        );
     }
 }
+
 
 fn find_nearest_unexplored(pos: &Vec3, explored_zones: &ExploredZones, game_map: &GameMap) -> Vec2 {
     let current_x = ((pos.x + 400.0) / explored_zones.cell_size) as i32;
@@ -305,109 +306,102 @@ fn check_resource_discovery(
 
     for explorer_transform in explorer_query.iter() {
         let explorer_pos = explorer_transform.translation;
-        
-        for (resource_transform, _resource_type) in resources_query.iter() {
-            let distance = explorer_pos.distance(resource_transform.translation);
-            
-            if distance < 50.0 {
+
+        for (res_transform, _res_type) in resources_query.iter() {
+            if explorer_pos.distance(res_transform.translation) <= 10.0 {
                 discovered_resource.position = Some(Vec2::new(
-                    resource_transform.translation.x,
-                    resource_transform.translation.y,
+                    res_transform.translation.x,
+                    res_transform.translation.y,
                 ));
-                break;
+                discovered_resource.is_being_collected = true;
+                println!("🔍 Ressource détectée, appel des mineurs !");
+                return;
             }
         }
     }
 }
 
+
 fn move_miners(
-    mut query_set: ParamSet<(
-        Query<&mut Transform, (With<Miner>, Without<Base>)>,
-        Query<(Entity, &Transform, &Resource)>,
+    mut commands: Commands,
+    mut q: ParamSet<(
+        Query<(Entity, &mut Transform, Option<&mut MinerPath>), (With<Miner>, Without<IdleMiner>)>,
+        Query<(Entity, &Transform), With<Resource>>,
     )>,
     mut discovered_resource: ResMut<DiscoveredResource>,
-    mut commands: Commands,
     time: Res<Time>,
     game_map: Res<GameMap>,
 ) {
-    if let Some(resource_pos) = discovered_resource.position {
-        let resource_pos_3d = Vec3::new(resource_pos.x, resource_pos.y, 0.0);
-        let mut resource_to_remove = None;
-        let mut resource_exists = false;
+    if !(discovered_resource.is_being_collected && discovered_resource.position.is_some()) {
+        return;
+    }
 
-        {
-            let resources = query_set.p1();
-            for (entity, transform, _) in resources.iter() {
-                if transform.translation.distance(resource_pos_3d) < 15.0 {
-                    resource_exists = true;
-                    resource_to_remove = Some(entity);
+    let target_pos = discovered_resource.position.unwrap();
+    let target_vec3 = Vec3::new(target_pos.x, target_pos.y, 0.0);
+
+    let resources: Vec<(Entity, Vec3)> = q
+        .p1()
+        .iter()
+        .map(|(e, t)| (e, t.translation))
+        .collect();
+
+    for (entity, mut transform, maybe_path) in q.p0().iter_mut() {
+        let current_pos = Vec2::new(transform.translation.x, transform.translation.y);
+
+        let mut path = if let Some(p) = maybe_path {
+            p.path.clone()
+        } else {
+            match find_path_a_star(current_pos, target_pos, &game_map) {
+                Some(p) => {
+                    commands.entity(entity).insert(MinerPath { path: p.clone() });
+                    p
+                }
+                None => continue,
+            }
+        };
+
+        if let Some(next_point) = path.first() {
+            let direction = (*next_point - current_pos).normalize_or_zero();
+            let speed = 120.0;
+            let step = direction * time.delta_seconds() * speed;
+
+            if current_pos.distance(*next_point) <= step.length() {
+                path.remove(0);
+                commands.entity(entity).insert(MinerPath { path });
+            } else {
+                transform.translation += Vec3::new(step.x, step.y, 0.0);
+                transform.rotation = Quat::from_rotation_z(-direction.y.atan2(direction.x));
+            }
+        }
+
+        if transform.translation.distance(target_vec3) <= 10.0 {
+            for (res_entity, res_pos) in &resources {
+                if res_pos.distance(target_vec3) <= 10.0 {
+                    // 💣 Supprimer ressource
+                    commands.entity(*res_entity).despawn();
+                    // ⛏️ Stopper le mineur
+                    commands.entity(entity).remove::<MinerPath>();
+                    commands.entity(entity).insert(IdleMiner);
+                    println!("💰 Ressource collectée !");
                     break;
                 }
             }
         }
+    }
 
-        if !resource_exists {
-            discovered_resource.position = None;
-            return;
-        }
+    let still_exists = q
+        .p1()
+        .iter()
+        .any(|(_, t)| t.translation.distance(target_vec3) <= 10.0);
 
-        let mut miners = query_set.p0();
-        for mut miner_transform in miners.iter_mut() {
-            let current_pos = miner_transform.translation;
-            let direction = (resource_pos_3d - current_pos).normalize();
-            let speed = 120.0;
-            let step_size = speed * time.delta_seconds();
-
-            if current_pos.distance(resource_pos_3d) < 15.0 {
-                if let Some(entity) = resource_to_remove {
-                    commands.entity(entity).despawn();
-                    discovered_resource.position = None;
-                    println!("Ressource collectée!");
-                    return;
-                }
-            }
-
-            // Amélioration du système de contournement d'obstacles
-            let mut best_direction = direction;
-            let mut min_obstacle_count = i32::MAX;
-            let test_angles: [f32; 13] = [
-                0.0, 15.0, -15.0, 30.0, -30.0, 45.0, -45.0, 
-                60.0, -60.0, 90.0, -90.0, 120.0, -120.0
-            ];
-
-            for angle in test_angles {
-                let test_direction = rotate_vector(direction, angle.to_radians());
-                let mut obstacle_count = 0;
-                let mut can_move = true;
-
-                // Vérifier plusieurs points le long de la trajectoire
-                for i in 1..=5 {
-                    let test_pos = current_pos + test_direction * (step_size * 0.5 * i as f32);
-                    if is_position_blocked(test_pos, &game_map) {
-                        obstacle_count += 1;
-                        if i <= 2 { // Bloquer les mouvements qui mènent directement à un obstacle
-                            can_move = false;
-                            break;
-                        }
-                    }
-                }
-
-                if can_move && obstacle_count < min_obstacle_count {
-                    min_obstacle_count = obstacle_count;
-                    best_direction = test_direction;
-                }
-            }
-
-            let new_pos = current_pos + best_direction * step_size;
-            if !is_position_blocked(new_pos, &game_map) {
-                miner_transform.translation = new_pos;
-                miner_transform.rotation = Quat::from_rotation_z(
-                    -best_direction.y.atan2(best_direction.x)
-                );
-            }
-        }
+    if !still_exists {
+        discovered_resource.position = None;
+        discovered_resource.is_being_collected = false;
+        println!("✅ Ressource nettoyée → Explorateur peut repartir !");
     }
 }
+
+
 
 fn rotate_vector(v: Vec3, angle: f32) -> Vec3 {
     let cos_a = angle.cos();
@@ -430,7 +424,7 @@ fn debug_draw_map(
         commands.entity(entity).despawn();
     }
 
-    // Dessiner les obstacles
+    // =obstacles
     for (y, row) in map.obstacles.iter().enumerate() {
         for (x, &is_obstacle) in row.iter().enumerate() {
             if is_obstacle {
@@ -454,17 +448,14 @@ fn debug_draw_map(
         }
     }
 
-    // Dessiner les ressources d'énergie (jaunes)
     for pos in &map_resources.energy_positions {
         spawn_resource(&mut commands, pos, Color::YELLOW, Resource::Energy);
     }
 
-    // Dessiner les ressources minérales (bleues)
     for pos in &map_resources.mineral_positions {
         spawn_resource(&mut commands, pos, Color::BLUE, Resource::Mineral);
     }
 
-    // Dessiner les sites scientifiques (verts)
     for pos in &map_resources.scientific_sites {
         spawn_resource(&mut commands, pos, Color::GREEN, Resource::Energy);
     }
@@ -485,6 +476,8 @@ fn spawn_resource(commands: &mut Commands, pos: &Vec2, color: Color, resource_ty
         DebugGrid,
     ));
 }
+
+
 
 fn generate_map(width: f32, height: f32, cell_size: f32, seed: u32) -> GameMap {
     let cols = (width / cell_size) as usize;
@@ -579,12 +572,118 @@ fn is_position_blocked(pos: Vec3, game_map: &GameMap) -> bool {
     
     false
 }
+use std::collections::{BinaryHeap, HashMap};
+use ordered_float::OrderedFloat;
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+struct Node {
+    pos: (usize, usize),
+    cost: OrderedFloat<f32>,
+    priority: OrderedFloat<f32>,
+}
+
+impl Ord for Node {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.priority.cmp(&self.priority)
+    }
+}
+impl PartialOrd for Node {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn find_path_a_star(start: Vec2, goal: Vec2, map: &GameMap) -> Option<Vec<Vec2>> {
+    let to_grid = |pos: Vec2| (
+        ((pos.x + map.size.x / 2.0) / map.cell_size) as usize,
+        ((pos.y + map.size.y / 2.0) / map.cell_size) as usize
+    );
+
+    let (start_x, start_y) = to_grid(start);
+    let (goal_x, goal_y) = to_grid(goal);
+
+    let mut open = BinaryHeap::new();
+    let mut came_from = HashMap::new();
+    let mut cost_so_far = HashMap::new();
+
+    open.push(Node {
+        pos: (start_x, start_y),
+        cost: OrderedFloat(0.0),
+        priority: OrderedFloat(0.0),
+    });
+
+    cost_so_far.insert((start_x, start_y), OrderedFloat(0.0));
+
+    let directions = [
+        (0, -1), (-1, 0), (1, 0), (0, 1),
+        (-1, -1), (-1, 1), (1, -1), (1, 1),
+    ];
+
+    while let Some(current) = open.pop() {
+        if current.pos == (goal_x, goal_y) {
+            let mut path = Vec::new();
+            let mut curr = current.pos;
+
+            while curr != (start_x, start_y) {
+                let world = Vec2::new(
+                    curr.0 as f32 * map.cell_size - map.size.x / 2.0 + map.cell_size / 2.0,
+                    curr.1 as f32 * map.cell_size - map.size.y / 2.0 + map.cell_size / 2.0,
+                );
+                path.push(world);
+                curr = came_from[&curr];
+            }
+
+            path.reverse();
+            return Some(path);
+        }
+
+        for (dx, dy) in directions {
+            let new_x = current.pos.0 as i32 + dx;
+            let new_y = current.pos.1 as i32 + dy;
+
+            if new_x < 0 || new_y < 0 {
+                continue;
+            }
+
+            let new_pos = (new_x as usize, new_y as usize);
+            if new_pos.0 >= map.obstacles[0].len() || new_pos.1 >= map.obstacles.len() {
+                continue;
+            }
+
+            if map.obstacles[new_pos.1][new_pos.0] {
+                continue;
+            }
+
+            let new_cost = OrderedFloat(cost_so_far[&current.pos].0 + 1.0);
+            if !cost_so_far.contains_key(&new_pos) || new_cost < cost_so_far[&new_pos] {
+                cost_so_far.insert(new_pos, new_cost);
+                let heuristic = ((goal_x as i32 - new_pos.0 as i32).abs()
+                    + (goal_y as i32 - new_pos.1 as i32).abs()) as f32;
+                let priority = OrderedFloat(new_cost.0 + heuristic);
+                open.push(Node {
+                    pos: new_pos,
+                    cost: new_cost,
+                    priority,
+                });
+                came_from.insert(new_pos, current.pos);
+            }
+        }
+    }
+
+    None
+}
 
 struct Map {
     width: u32,
     height: u32,
-    fog: Vec<bool>, // true means fog, false means clear
+    fog: Vec<bool>,
 }
+
+#[derive(Component)]
+struct MinerPath {
+    path: Vec<Vec2>,
+}
+
 
 impl Map {
     fn new(width: u32, height: u32) -> Self {
