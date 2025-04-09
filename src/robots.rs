@@ -14,9 +14,6 @@ struct Miner;
 struct Base;
 
 #[derive(Component)]
-struct Crystal;
-
-#[derive(Component)]
 struct IdleMiner;
 
 
@@ -30,12 +27,13 @@ pub enum Resource {
 struct DebugGrid;
 
 #[derive(Resource)]
-struct GameMap {
-    size: Vec2,
-    cell_size: f32,
-    obstacles: Vec<Vec<bool>>,
-    seed: u32,
+pub struct GameMap {
+    pub size: Vec2,
+    pub cell_size: f32,
+    pub obstacles: Vec<Vec<bool>>,
+    pub seed: u32,
 }
+
 
 #[derive(Resource)]
 pub struct MapResources {
@@ -479,7 +477,7 @@ fn spawn_resource(commands: &mut Commands, pos: &Vec2, color: Color, resource_ty
 
 
 
-fn generate_map(width: f32, height: f32, cell_size: f32, seed: u32) -> GameMap {
+pub fn generate_map(width: f32, height: f32, cell_size: f32, seed: u32) -> GameMap {
     let cols = (width / cell_size) as usize;
     let rows = (height / cell_size) as usize;
     let perlin = Perlin::new(seed);
@@ -546,7 +544,7 @@ fn get_valid_position(map: &GameMap, rng: &mut impl Rng) -> Vec2 {
     }
 }
 
-fn is_position_blocked(pos: Vec3, game_map: &GameMap) -> bool {
+pub fn is_position_blocked(pos: Vec3, game_map: &GameMap) -> bool {
     let grid_x = ((pos.x + game_map.size.x/2.0) / game_map.cell_size) as i32;
     let grid_y = ((pos.y + game_map.size.y/2.0) / game_map.cell_size) as i32;
     
@@ -593,7 +591,7 @@ impl PartialOrd for Node {
     }
 }
 
-fn find_path_a_star(start: Vec2, goal: Vec2, map: &GameMap) -> Option<Vec<Vec2>> {
+pub fn find_path_a_star(start: Vec2, goal: Vec2, map: &GameMap) -> Option<Vec<Vec2>> {
     let to_grid = |pos: Vec2| (
         ((pos.x + map.size.x / 2.0) / map.cell_size) as usize,
         ((pos.y + map.size.y / 2.0) / map.cell_size) as usize
@@ -673,36 +671,7 @@ fn find_path_a_star(start: Vec2, goal: Vec2, map: &GameMap) -> Option<Vec<Vec2>>
     None
 }
 
-struct Map {
-    width: u32,
-    height: u32,
-    fog: Vec<bool>,
-}
-
 #[derive(Component)]
 struct MinerPath {
     path: Vec<Vec2>,
-}
-
-
-impl Map {
-    fn new(width: u32, height: u32) -> Self {
-        Self {
-            width,
-            height,
-            fog: vec![true; (width * height) as usize],
-        }
-    }
-
-    fn clear_fog(&mut self) {
-        for cell in self.fog.iter_mut() {
-            *cell = false;
-        }
-    }
-}
-
-fn main() {
-    let mut map = Map::new(10, 10);
-    map.clear_fog();
-    // Now the map has no fog
 }

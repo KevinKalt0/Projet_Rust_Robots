@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 
-mod robots;
-use robots::SimulationPlugin;
+use simulation_robots::robots;
 
 fn main() {
     App::new()
