@@ -4,7 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = "0.12.0"  # ou votre version actuelle
-rand = "0.8.5"
-noise = "0.8.2" 
-ordered-float = "3.0"
+bevy = "0.11"
+rand = "0.8"
+noise = "0.8"
+ordered-float = "3.7.0"
+
+[[bin]]
+name = "simulation_robots"
+path = "src/main.rs"
+
+[lib]
+name = "simulation_robots"
+path = "src/lib.rs"
