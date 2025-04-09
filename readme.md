@@ -21,6 +21,7 @@ Ce projet est une simulation interactive de robots explorateurs et mineurs dans 
   - Attendent à la base jusqu'à ce qu'une ressource soit découverte
   - Se déplacent en groupe vers les ressources découvertes
   - Collectent les ressources et les ramènent à la base
+  - Effectuent deux allers-retours à chaque fois, en raison de la quantité abondante de ressources
   - Utilisent un algorithme avancé pour contourner les obstacles
 
 ### Mécanismes de jeu
