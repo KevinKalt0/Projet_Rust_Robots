@@ -53,8 +53,9 @@ Le projet est structuré autour du pattern ECS (Entity-Component-System) de Bevy
 
 1. **Installation**
    ```bash
-   git clone [URL du dépôt]
+   git clone https://github.com/KevinKalt0/Projet_Rust_Robots.git
    cd rust_robot
+   cd simulation_robots
    cargo run
    ```
 
