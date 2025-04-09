@@ -16,3 +16,4 @@ path = "src/main.rs"
 [lib]
 name = "simulation_robots"
 path = "src/lib.rs"
+

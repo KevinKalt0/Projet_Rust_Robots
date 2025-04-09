@@ -16,9 +16,6 @@ struct Miner;
 struct Base;
 
 #[derive(Component)]
-struct Crystal;
-
-#[derive(Component)]
 struct IdleMiner;
 
 #[derive(Component, Debug, Clone)]
